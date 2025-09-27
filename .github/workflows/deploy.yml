@@ -1,0 +1,31 @@
+name: Deploy (placeholder)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        required: true
+        options:
+          - staging
+          - production
+      dry_run:
+        description: "Simulate steps without making changes"
+        type: boolean
+        default: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Print inputs
+        run: |
+          echo "ENV=${{ github.event.inputs.environment }}"
+          echo "DRY_RUN=${{ github.event.inputs.dry_run }}"
+      - name: Placeholder only
+        run: |
+          echo "This is a placeholder deploy workflow."
+          echo "Add secrets and deployment steps later."
