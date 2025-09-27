@@ -1,0 +1,39 @@
+name: Todo Flask CI (app tests)
+
+on:
+  push:
+    paths:
+      - 'todo-flask/**'
+  pull_request:
+    paths:
+      - 'todo-flask/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: todo-flask
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Smoke test /health
+        run: |
+          python - <<'PY'
+          from app import app
+          with app.test_client() as c:
+              r = c.get('/health')
+              assert r.status_code == 200 and b'OK' in r.data, f"unexpected: {r.status_code} {r.data!r}"
+          print('SMOKE_OK')
+          PY

@@ -1,0 +1,18 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+# Virtualenv
+.venv/
+# Flask instance files
+instance/
+*.db
+# OS
+.DS_Store
+Thumbs.db
+# Editor
+.vscode/
+.idea/
