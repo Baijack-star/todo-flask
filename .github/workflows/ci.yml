@@ -2,9 +2,10 @@
 
 on:
   push:
-    paths:
-      - 'todo-flask/**'
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
     paths:
       - 'todo-flask/**'
 
