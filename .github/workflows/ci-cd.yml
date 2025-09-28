@@ -1,0 +1,187 @@
+name: Todo Flask CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [staging, production]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Smoke test /health
+        run: |
+          python - <<'PY'
+          from app import app
+          with app.test_client() as c:
+              r = c.get('/health')
+              assert r.status_code == 200 and b'OK' in r.data, f"unexpected: {r.status_code} {r.data!r}"
+          print('SMOKE_OK')
+          PY
+
+  deploy_staging:
+    name: Deploy to Staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare remote (create dir, install system deps)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          port: ${{ secrets.STAGING_SSH_PORT }}
+          key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ secrets.STAGING_DEPLOY_PATH }}"
+            mkdir -p "$DEPLOY_PATH"
+            apt-get update -y
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip
+
+      - name: Upload app sources to staging
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          port: ${{ secrets.STAGING_SSH_PORT }}
+          key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          source: "*"
+          target: "${{ secrets.STAGING_DEPLOY_PATH }}"
+          overwrite: true
+
+      - name: Setup venv, install deps, and restart service (staging)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          port: ${{ secrets.STAGING_SSH_PORT }}
+          key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ secrets.STAGING_DEPLOY_PATH }}"
+            APP_PORT=8000
+            cd "$DEPLOY_PATH"
+            if [ ! -d venv ]; then python3 -m venv venv; fi
+            . venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            SERVICE_FILE=/etc/systemd/system/todo-flask-staging.service
+            cat > /tmp/todo-flask-staging.service <<EOF
+            [Unit]
+            Description=Todo Flask (staging)
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=root
+            WorkingDirectory=$DEPLOY_PATH
+            Environment="PATH=$DEPLOY_PATH/venv/bin"
+            ExecStart=$DEPLOY_PATH/venv/bin/gunicorn -w 2 -b 0.0.0.0:${APP_PORT} app:app
+            Restart=on-failure
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            mv /tmp/todo-flask-staging.service "$SERVICE_FILE"
+            systemctl daemon-reload
+            systemctl enable todo-flask-staging.service || true
+            systemctl restart todo-flask-staging.service
+            systemctl --no-pager -l status todo-flask-staging.service || true
+
+  deploy_production:
+    name: Deploy to Production
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare remote (create dir, install system deps)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_SSH_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USER }}
+          port: ${{ secrets.PRODUCTION_SSH_PORT }}
+          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ secrets.PRODUCTION_DEPLOY_PATH }}"
+            mkdir -p "$DEPLOY_PATH"
+            apt-get update -y
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip
+
+      - name: Upload app sources to production
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PRODUCTION_SSH_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USER }}
+          port: ${{ secrets.PRODUCTION_SSH_PORT }}
+          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          source: "*"
+          target: "${{ secrets.PRODUCTION_DEPLOY_PATH }}"
+          overwrite: true
+
+      - name: Setup venv, install deps, and restart service (production)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_SSH_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USER }}
+          port: ${{ secrets.PRODUCTION_SSH_PORT }}
+          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ secrets.PRODUCTION_DEPLOY_PATH }}"
+            APP_PORT=8001
+            cd "$DEPLOY_PATH"
+            if [ ! -d venv ]; then python3 -m venv venv; fi
+            . venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            SERVICE_FILE=/etc/systemd/system/todo-flask.service
+            cat > /tmp/todo-flask.service <<EOF
+            [Unit]
+            Description=Todo Flask (production)
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=root
+            WorkingDirectory=$DEPLOY_PATH
+            Environment="PATH=$DEPLOY_PATH/venv/bin"
+            ExecStart=$DEPLOY_PATH/venv/bin/gunicorn -w 2 -b 0.0.0.0:${APP_PORT} app:app
+            Restart=on-failure
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            mv /tmp/todo-flask.service "$SERVICE_FILE"
+            systemctl daemon-reload
+            systemctl enable todo-flask.service || true
+            systemctl restart todo-flask.service
+            systemctl --no-pager -l status todo-flask.service || true
